@@ -1,0 +1,7 @@
+*.exe
+*.exp
+*.lib
+
+trailer_checkpoint.txt
+.vscode
+!/boinc/**

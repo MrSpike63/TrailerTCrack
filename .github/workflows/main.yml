@@ -1,0 +1,51 @@
+name: "Build"
+
+on: [workflow_dispatch]
+
+jobs:
+  x64_windows:
+    name: "x86_64 Windows"
+    runs-on: [windows-2019]
+    steps:
+      - uses: actions/checkout@v2
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: "Setup"
+        run: |
+          choco install cuda --version=10.1.243 -y
+        
+      - name: "Configure"
+        shell: bash
+        run: |
+          echo "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v10.1\bin" >> $GITHUB_PATH
+          echo "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v10.1\include" >> $GITHUB_PATH
+          echo "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v10.1\lib\x64" >> $GITHUB_PATH
+          echo "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v10.1\extras\CUPTI\libx64" >> $GITHUB_PATH
+          echo "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v10.1\lib" >> $GITHUB_PATH
+
+      - name: "Build"
+        run: |
+          nvcc main.cu -o x86_64_windows.exe -m=64 -O3 -Xptxas -O3 -Xptxas -v -Xptxas -dlcm=cg -ID:\a\TrailerTCrack\TrailerTCrack\boinc\ -ID:\a\TrailerTCrack\TrailerTCrack\boinc\win\ -LD:\a\TrailerTCrack\TrailerTCrack\boinc\lib\x86_64\win\ -lboinc -lboinc_api -luser32 -DBOINC -D_WIN32
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: x86_64_windows.exe
+          path: ./x86_64_windows.exe
+
+
+  x64_linux:
+    name: "x86_64 Linux"
+    runs-on: [ubuntu-18.04]
+    container: nvidia/cuda:10.1-devel-ubuntu18.04
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: "Build"
+      run: |
+        nvcc main.cu -o x86_64_linux.bin -m=64 -O3 -Xptxas -O3 -Xptxas -v -Xptxas -dlcm=cg -Iboinc/ -Lboinc/lib/x86_64/lin -Xcompiler -static-libgcc -Xcompiler -static-libstdc++ -lboinc -lboinc_api -lcuda -DBOINC
+        ls -la
+
+    - uses: actions/upload-artifact@v2
+      with:
+        name: x86_64_linux.bin
+        path: ./x86_64_linux.bin
