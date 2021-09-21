@@ -2,6 +2,7 @@
 *.exp
 *.lib
 
-trailer_checkpoint.txt
+*.txt
+tune.cu
 .vscode
 !/boinc/**
