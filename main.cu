@@ -745,11 +745,13 @@ int main(int argc, char* argv[]) {
         fwrite(&checkpointData, sizeof(checkpointData), 1, checkpointFile);
         fclose(checkpointFile);
 
+        FILE *seedsOut = boinc_fopen("trailer_seeds.txt", "a");
         for (int j = 0; j < outputCounter; j++) {
             if (outputBuffer[j] < (TASK_WORK * (taskNumber + 1))) {
-                fprintf(stderr, "Seed: %llu\n", outputBuffer[j]);
+                fprintf(seedsOut, "Seed: %llu\n", outputBuffer[j]);
             }
         }
+        fclose(seedsOut);
         outputCounter = 0;
 
         double fracDone = (double)i / ITERATIONS_NEEDED;
