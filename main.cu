@@ -26,8 +26,10 @@
     #define boinc_end_critical_section()
 
     #define boinc_fraction_done(frac)
-    #define boinc_init()
     #define boinc_finish(s) exit(s)
+
+    #define boinc_time_to_checkpoint() true
+    #define boinc_checkpoint_completed()
 #endif
 
 
@@ -551,7 +553,7 @@ __device__ bool checkTerrain(uint64_t worldSeed) {
     if (SHARED_MEMORY_ACCESS(sharedMemoryOffset + 6) != 66) { return false; }
     if (SHARED_MEMORY_ACCESS(sharedMemoryOffset + 7) != 66) { return false; }
     if (SHARED_MEMORY_ACCESS(sharedMemoryOffset + 8) != 65) { return false; }
-    if (SHARED_MEMORY_ACCESS(sharedMemoryOffset + 9) != 65) { return false; }
+    // if (SHARED_MEMORY_ACCESS(sharedMemoryOffset + 9) != 65) { return false; }
     if (SHARED_MEMORY_ACCESS(sharedMemoryOffset + 12) != 66) { return false; }
     if (SHARED_MEMORY_ACCESS(sharedMemoryOffset + 13) != 65) { return false; }
     if (SHARED_MEMORY_ACCESS(sharedMemoryOffset + 14) != 64) { return false; }
@@ -562,7 +564,7 @@ __device__ bool checkTerrain(uint64_t worldSeed) {
 
 
 __device__ __managed__ uint32_t outputCounter = 0;
-__device__ __managed__ uint64_t outputBuffer[10000];
+__device__ __managed__ uint64_t outputBuffer[100000];
 __global__ void __launch_bounds__(THREAD_COUNT, 3) gpuWork(uint64_t seedOffset) {
     uint64_t worldSeed = (uint64_t)blockIdx.x * (uint64_t)blockDim.x + (uint64_t)threadIdx.x + seedOffset;
 
@@ -589,6 +591,12 @@ inline void gpuAssert(cudaError_t code, const char *file, int line) {
 
 
 int calculateBlockSize(double threshold) {
+    gpuWork<<<1, THREAD_COUNT>>>(0);
+    GPU_ASSERT(cudaPeekAtLastError());
+    GPU_ASSERT(cudaDeviceSynchronize());
+    GPU_ASSERT(cudaPeekAtLastError());
+    outputCounter = 0;
+
     int setBits = 0;
     int lowestSetBit = 30;
     for (int i = 0; i < 30; i++) {
@@ -602,6 +610,7 @@ int calculateBlockSize(double threshold) {
             GPU_ASSERT(cudaPeekAtLastError());
             GPU_ASSERT(cudaDeviceSynchronize());
             GPU_ASSERT(cudaPeekAtLastError());
+            outputCounter = 0;
 
             uint64_t endTime = milliseconds();
 
@@ -634,7 +643,6 @@ struct CheckpointData {
     int lastIteration;
     double elapsed;
     int blockCount;
-    int taskNumber;
 };
 
 int main(int argc, char* argv[]) {
@@ -654,6 +662,7 @@ int main(int argc, char* argv[]) {
     int BLOCK_COUNT = 0;
 
     fprintf(stderr, "Recieved work unit: %d.\n", taskNumber);
+    fflush(stderr);
 
     cudaSetDevice(device);
     GPU_ASSERT(cudaPeekAtLastError());
@@ -661,38 +670,31 @@ int main(int argc, char* argv[]) {
     GPU_ASSERT(cudaPeekAtLastError());
 
     #ifdef BOINC
-        boinc_init();
-
         BOINC_OPTIONS options;
         boinc_options_defaults(options);
         options.normal_thread_priority = true; 
         boinc_init_options(&options);
     #endif
 
-    boinc_begin_critical_section();
     FILE* checkpointFile = boinc_fopen("trailer_checkpoint.txt", "rb");
 
-    bool startNewTask = false;
     if (checkpointFile) {
+        boinc_begin_critical_section();
         struct CheckpointData checkpointData;
 
         fread(&checkpointData, sizeof(checkpointData), 1, checkpointFile);
-        if (checkpointData.taskNumber == taskNumber) {
-            startIteration = checkpointData.lastIteration + 1;
-            elapsed = checkpointData.elapsed;
-            BLOCK_COUNT = checkpointData.blockCount;
-            fprintf(stderr, "Loaded checkpoint %d %.2f %d.\n", startIteration, elapsed, BLOCK_COUNT);
-        } else {
-            fprintf(stderr, "Loaded old checkpoint, starting new task.\n");
-            boinc_delete_file("trailer_checkpoint.txt");
-            startNewTask = true;
-        }
+        startIteration = checkpointData.lastIteration + 1;
+        elapsed = checkpointData.elapsed;
+        BLOCK_COUNT = checkpointData.blockCount;
+
         fclose(checkpointFile);
+        fprintf(stderr, "Loaded checkpoint %d %.2f %d.\n", startIteration, elapsed, BLOCK_COUNT);
+        fflush(stderr);
+        boinc_end_critical_section();
     } else {
         fprintf(stderr, "No checkpoint to load.\n");
-        startNewTask = true;
     }
-    if (startNewTask) {
+    if (BLOCK_COUNT == 0) {
         cudaDeviceProp deviceProp;
         cudaGetDeviceProperties(&deviceProp, device);
 
@@ -708,16 +710,16 @@ int main(int argc, char* argv[]) {
             BLOCK_COUNT = calculateBlockSize(0.5);
         } else {
             fprintf(stderr, "Unrecognized compute capability.\n");
+            fflush(stderr);
             boinc_finish(1);
         }
         fprintf(stderr, "Calculated block count: %d.\n", BLOCK_COUNT);
+        if (BLOCK_COUNT == 0) { BLOCK_COUNT = 1; }
+        fflush(stderr);
     }
 
     uint64_t GRID_WORK = (uint64_t)BLOCK_COUNT * THREAD_COUNT;
-    int ITERATIONS_NEEDED = ((TASK_WORK + GRID_WORK- 1) / GRID_WORK);
-
-    boinc_end_critical_section();
-
+    int ITERATIONS_NEEDED = ((TASK_WORK + GRID_WORK - 1) / GRID_WORK);
 
     for (int i = startIteration; i < ITERATIONS_NEEDED; i++) {
         uint64_t seedOffset = (TASK_WORK * taskNumber) + GRID_WORK * i;
@@ -734,37 +736,46 @@ int main(int argc, char* argv[]) {
 
         double localElapsed = ((double)(endTime - startTime) / 1000);
         elapsed += localElapsed;
-        
-        struct CheckpointData checkpointData;
-        checkpointData.lastIteration = i;
-        checkpointData.elapsed = elapsed;
-        checkpointData.blockCount = BLOCK_COUNT;
-        checkpointData.taskNumber = taskNumber;
 
-        FILE* checkpointFile = boinc_fopen("trailer_checkpoint.txt", "wb");
-        fwrite(&checkpointData, sizeof(checkpointData), 1, checkpointFile);
-        fclose(checkpointFile);
+        if (boinc_time_to_checkpoint()) {
+            struct CheckpointData checkpointData;
+            checkpointData.lastIteration = i;
+            checkpointData.elapsed = elapsed;
+            checkpointData.blockCount = BLOCK_COUNT;
 
-        FILE *seedsOut = boinc_fopen("trailer_seeds.txt", "a");
-        for (int j = 0; j < outputCounter; j++) {
-            if (outputBuffer[j] < (TASK_WORK * (taskNumber + 1))) {
-                fprintf(seedsOut, "Seed: %llu\n", outputBuffer[j]);
-            }
+            FILE* checkpointFile = boinc_fopen("trailer_checkpoint.txt", "wb");
+            fwrite(&checkpointData, sizeof(checkpointData), 1, checkpointFile);
+            fclose(checkpointFile);
+
+            boinc_checkpoint_completed();
         }
-        fclose(seedsOut);
-        outputCounter = 0;
+
+        if (outputCounter > 0) {
+            FILE *seedsOut = boinc_fopen("trailer_seeds.txt", "a");
+            for (int j = 0; j < outputCounter; j++) {
+                if (outputBuffer[j] < (TASK_WORK * (taskNumber + 1))) {
+                    fprintf(seedsOut, "Seed: %llu\n", outputBuffer[j]);
+                }
+            }
+            fclose(seedsOut);
+            outputCounter = 0;
+        }
 
         double fracDone = (double)i / ITERATIONS_NEEDED;
         boinc_fraction_done(fracDone);
 
         boinc_end_critical_section();   
     }
-    fprintf(stderr, "Finished in %.2f seconds. Speed: %.2f/s.", elapsed, (double)TASK_WORK / elapsed);
 
     boinc_begin_critical_section();
+    FILE *seedsOut = boinc_fopen("trailer_seeds.txt", "a");
+    fclose(seedsOut);
+
+    fprintf(stderr, "Finished in %.2f seconds. Speed: %.2f/s.\n", elapsed, (double)TASK_WORK / elapsed);
+    fflush(stderr);
     boinc_delete_file("trailer_checkpoint.txt");
-    boinc_end_critical_section(); 
+
+    boinc_end_critical_section();
 
     boinc_finish(0);
-    
 }
