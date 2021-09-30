@@ -664,17 +664,27 @@ int main(int argc, char* argv[]) {
     fprintf(stderr, "Recieved work unit: %d.\n", taskNumber);
     fflush(stderr);
 
-    cudaSetDevice(device);
-    GPU_ASSERT(cudaPeekAtLastError());
-    GPU_ASSERT(cudaDeviceSynchronize());
-    GPU_ASSERT(cudaPeekAtLastError());
-
     #ifdef BOINC
         BOINC_OPTIONS options;
         boinc_options_defaults(options);
         options.normal_thread_priority = true; 
         boinc_init_options(&options);
+
+        APP_INIT_DATA aid;
+        boinc_get_init_data(aid);
+        
+        if (aid.gpu_device_num >= 0) {
+            fprintf(stderr, "boinc gpu: %d, cli gpu: %d.\n", aid.gpu_device_num, device);
+            device = aid.gpu_device_num;
+        } else {
+            fprintf(stderr, "cli gpu: %d.\n", device);
+        }
     #endif
+
+    cudaSetDevice(device);
+    GPU_ASSERT(cudaPeekAtLastError());
+    GPU_ASSERT(cudaDeviceSynchronize());
+    GPU_ASSERT(cudaPeekAtLastError());
 
     FILE* checkpointFile = boinc_fopen("trailer_checkpoint.txt", "rb");
 
