@@ -103,8 +103,8 @@ namespace Random {
 
 
 __shared__ uint8_t sharedMemory[256 * THREAD_COUNT];
-#define SHARED_MEMORY_ACCESS(n) sharedMemory[(n << 7) | threadIdx.x]
-#define CASTED_SHARED_MEMORY_ACCESS(n) ((double*)sharedMemory)[(n << 7) | threadIdx.x]
+#define SHARED_MEMORY_ACCESS(n) sharedMemory[(threadIdx.x << 8) | n]
+#define CASTED_SHARED_MEMORY_ACCESS(n) ((double*)sharedMemory)[(threadIdx.x << 5) | n]
 
 
 namespace Terrain {
